@@ -2,9 +2,9 @@ import { faker } from "@faker-js/faker";
 
 export function createRandomProducts() {
     return {
-        uuid: faker.string.uuid(),
-        product: faker.commerce.product(),
-        productDescription: faker.commerce.productDescription(),
+        id: faker.string.uuid(),
+        title: faker.commerce.product(),
+        description: faker.commerce.productDescription(),
         price: faker.commerce.price(),
         department: faker.commerce.department(),
     };
