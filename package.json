@@ -21,6 +21,7 @@
     "typescript": "~5.9.3"
   },
   "dependencies": {
+    "@faker-js/faker": "^10.4.0",
     "aws-cdk-lib": "^2.248.0",
     "constructs": "^10.5.0",
     "hono": "^4.12.14"

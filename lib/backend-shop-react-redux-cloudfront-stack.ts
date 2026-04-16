@@ -10,6 +10,8 @@ export class BackendShopReactReduxCloudfrontStack extends cdk.Stack {
     const fn = new NodejsFunction(this, 'lambda', {
       entry: 'lambda/index.ts',
       handler: 'handler',
+      memorySize: 1024,
+      timeout: cdk.Duration.seconds(5),
       runtime: lambda.Runtime.NODEJS_22_X,
     })
     const fnUrl = fn.addFunctionUrl({
