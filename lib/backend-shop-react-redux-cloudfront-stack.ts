@@ -36,6 +36,7 @@ export class ProductServiceStack extends cdk.Stack {
       handler: 'handler',
       environment: {
         PRODUCTS_TABLE_NAME: productsTable.tableName,
+        STOCK_TABLE_NAME: stockTable.tableName,
       },
     })
 
