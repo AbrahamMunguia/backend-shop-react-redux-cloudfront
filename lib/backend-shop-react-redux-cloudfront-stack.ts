@@ -10,31 +10,25 @@ export class ProductServiceStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props)
 
-    // ─── DynamoDB Tables ──────────────────────────────────────────────────────
-
     const productsTable = new dynamodb.Table(this, 'ProductsTable', {
       tableName: 'products',
       partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // change to RETAIN for production
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     })
 
     const stockTable = new dynamodb.Table(this, 'StockTable', {
       tableName: 'stock',
       partitionKey: { name: 'product_id', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY, // change to RETAIN for production
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     })
-
-    // ─── Shared Lambda config ─────────────────────────────────────────────────
 
     const sharedLambdaProps = {
       runtime: lambda.Runtime.NODEJS_22_X,
       memorySize: 512,
       timeout: cdk.Duration.seconds(10),
     }
-
-    // ─── API Lambda Functions ─────────────────────────────────────────────────
 
     const productsLambda = new NodejsFunction(this, 'ProductsLambda', {
       ...sharedLambdaProps,
@@ -54,20 +48,15 @@ export class ProductServiceStack extends cdk.Stack {
       },
     })
 
-    // ─── DynamoDB Permissions ─────────────────────────────────────────────────
-
     productsTable.grantReadWriteData(productsLambda)
+    productsTable.grantReadData(stockLambda)
     stockTable.grantReadWriteData(stockLambda)
-
-    // ─── Seed Lambda + Trigger ────────────────────────────────────────────────
-    // Runs automatically on every `cdk deploy`, after tables are ready.
-    // Clears old data first so repeated deploys stay idempotent.
 
     const seedLambda = new NodejsFunction(this, 'SeedLambda', {
       ...sharedLambdaProps,
       entry: 'lambda/seed.ts',
       handler: 'handler',
-      timeout: cdk.Duration.seconds(60), // more headroom for clear + write
+      timeout: cdk.Duration.seconds(60),
       environment: {
         PRODUCTS_TABLE_NAME: productsTable.tableName,
         STOCK_TABLE_NAME: stockTable.tableName,
@@ -80,10 +69,8 @@ export class ProductServiceStack extends cdk.Stack {
     new triggers.Trigger(this, 'SeedTrigger', {
       handler: seedLambda,
       executeAfter: [productsTable, stockTable],
-      invocationType: triggers.InvocationType.REQUEST_RESPONSE, // fail deploy if seed fails
+      invocationType: triggers.InvocationType.REQUEST_RESPONSE,
     })
-
-    // ─── API Gateway ──────────────────────────────────────────────────────────
 
     const api = new apigateway.RestApi(this, 'product-api', {
       restApiName: 'Product Service API',

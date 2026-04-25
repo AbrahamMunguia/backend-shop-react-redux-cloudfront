@@ -9,11 +9,16 @@ import {
 } from '@aws-sdk/client-dynamodb'
 import { marshall, unmarshall } from '@aws-sdk/util-dynamodb'
 import type { Stock } from '../models'
+import { cors } from 'hono/cors'
 
 const app = new Hono()
 const db = new DynamoDBClient({})
 const TABLE = process.env.STOCK_TABLE_NAME!
-
+app.use('*', cors({
+    origin: ['https://d1jkai40iwonc0.cloudfront.net', 'http://localhost:3000'],
+    allowMethods: ['GET', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization'],
+}))
 // ─── GET /stocks ──────────────────────────────────────────────────────────────
 app.get('/stocks', async (c) => {
     const { Items = [] } = await db.send(new ScanCommand({ TableName: TABLE }))

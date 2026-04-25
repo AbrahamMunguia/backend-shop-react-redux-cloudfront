@@ -5,7 +5,7 @@ import { cors } from 'hono/cors'
 
 const app = new Hono()
 app.use('*', cors({
-    origin: 'https://d1jkai40iwonc0.cloudfront.net',
+    origin: ['https://d1jkai40iwonc0.cloudfront.net', 'http://localhost:3000'],
     allowMethods: ['GET', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
 }))
