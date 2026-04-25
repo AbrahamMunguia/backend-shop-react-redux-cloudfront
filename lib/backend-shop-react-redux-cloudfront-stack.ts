@@ -50,6 +50,7 @@ export class ProductServiceStack extends cdk.Stack {
 
     productsTable.grantReadWriteData(productsLambda)
     productsTable.grantReadData(stockLambda)
+    stockTable.grantReadWriteData(productsLambda)
     stockTable.grantReadWriteData(stockLambda)
 
     const seedLambda = new NodejsFunction(this, 'SeedLambda', {
