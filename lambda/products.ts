@@ -20,7 +20,7 @@ const STOCK_TABLE = process.env.STOCK_TABLE_NAME!
 export type ProductWithStock = Product & { stock: number }
 app.use('*', cors({
     origin: ['https://d1jkai40iwonc0.cloudfront.net', 'http://localhost:3000'],
-    allowMethods: ['GET', 'OPTIONS'],
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
 }))
 // ─── Helpers ──────────────────────────────────────────────────────────────────
