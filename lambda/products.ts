@@ -1,55 +1,70 @@
-import { Hono } from "hono";
-import { handle } from "hono/aws-lambda";
-import type { Product } from "../models";
+import { Hono } from 'hono'
+import { handle } from 'hono/aws-lambda'
+import {
+    DynamoDBClient,
+    ScanCommand,
+    GetItemCommand,
+    PutItemCommand,
+} from '@aws-sdk/client-dynamodb'
+import { marshall, unmarshall } from '@aws-sdk/util-dynamodb'
+import type { Product } from '../models'
 
-const app = new Hono();
+const app = new Hono()
+const db = new DynamoDBClient({})
+const TABLE = process.env.PRODUCTS_TABLE_NAME!
 
-// In-memory store — replace with your DB client (e.g. RDS, DynamoDB)
-const products: Product[] = [];
+// ─── GET /products ────────────────────────────────────────────────────────────
+app.get('/products', async (c) => {
+    const { Items = [] } = await db.send(new ScanCommand({ TableName: TABLE }))
+    const products = Items.map((item) => unmarshall(item) as Product)
+    return c.json(products, 200)
+})
 
-// ─── GET /products ──────────────────────────────────────────────────────────
-// Returns the full list of products
-app.get("/products", (c) => {
-    return c.json(products, 200);
-});
+// ─── GET /products/:id ───────────────────────────────────────────────────────
+app.get('/products/:id', async (c) => {
+    const { id } = c.req.param()
 
-// ─── GET /products/:id ──────────────────────────────────────────────────────
-// Returns a single product by its UUID
-app.get("/products/:id", (c) => {
-    const { id } = c.req.param();
-    const product = products.find((p) => p.id === id);
+    const { Item } = await db.send(
+        new GetItemCommand({
+            TableName: TABLE,
+            Key: marshall({ id }),
+        })
+    )
 
-    if (!product) {
-        return c.json({ message: `Product with id "${id}" not found.` }, 404);
+    if (!Item) {
+        return c.json({ message: `Product with id "${id}" not found.` }, 404)
     }
 
-    return c.json(product, 200);
-});
+    return c.json(unmarshall(Item) as Product, 200)
+})
 
-// ─── POST /products ─────────────────────────────────────────────────────────
-// Creates a new product; auto-generates the UUID
-app.post("/products", async (c) => {
-    const body = await c.req.json<Omit<Product, "id">>();
+// ─── POST /products ───────────────────────────────────────────────────────────
+app.post('/products', async (c) => {
+    const body = await c.req.json<Omit<Product, 'id'>>()
 
-    // Validate required fields
-    if (!body.title || typeof body.title !== "string") {
-        return c.json({ message: "Field 'title' is required and must be a string." }, 400);
+    if (!body.title || typeof body.title !== 'string') {
+        return c.json({ message: "Field 'title' is required and must be a string." }, 400)
     }
 
     if (body.price === undefined || !Number.isInteger(body.price)) {
-        return c.json({ message: "Field 'price' is required and must be an integer." }, 400);
+        return c.json({ message: "Field 'price' is required and must be an integer." }, 400)
     }
 
     const newProduct: Product = {
         id: crypto.randomUUID(),
         title: body.title,
-        description: body.description ?? "",
+        description: body.description ?? '',
         price: body.price,
-    };
+    }
 
-    products.push(newProduct);
+    await db.send(
+        new PutItemCommand({
+            TableName: TABLE,
+            Item: marshall(newProduct),
+        })
+    )
 
-    return c.json(newProduct, 201);
-});
+    return c.json(newProduct, 201)
+})
 
-export const handler = handle(app);
+export const handler = handle(app)

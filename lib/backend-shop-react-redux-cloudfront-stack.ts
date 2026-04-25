@@ -37,7 +37,7 @@ export class ProductServiceStack extends cdk.Stack {
 
     const productsLambda = new NodejsFunction(this, 'ProductsLambda', {
       ...sharedLambdaProps,
-      entry: 'lambda/Products.ts',
+      entry: 'lambda/products.ts',
       handler: 'handler',
       environment: {
         PRODUCTS_TABLE_NAME: productsTable.tableName,
@@ -46,7 +46,7 @@ export class ProductServiceStack extends cdk.Stack {
 
     const stockLambda = new NodejsFunction(this, 'StockLambda', {
       ...sharedLambdaProps,
-      entry: 'lambda/Stock.ts',
+      entry: 'lambda/stock.ts',
       handler: 'handler',
       environment: {
         STOCK_TABLE_NAME: stockTable.tableName,
