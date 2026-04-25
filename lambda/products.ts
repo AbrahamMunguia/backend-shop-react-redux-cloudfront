@@ -16,13 +16,13 @@ const db = new DynamoDBClient({})
 
 const PRODUCTS_TABLE = process.env.PRODUCTS_TABLE_NAME!
 const STOCK_TABLE = process.env.STOCK_TABLE_NAME!
+
+export type ProductWithStock = Product & { stock: number }
 app.use('*', cors({
     origin: ['https://d1jkai40iwonc0.cloudfront.net', 'http://localhost:3000'],
     allowMethods: ['GET', 'OPTIONS'],
     allowHeaders: ['Content-Type', 'Authorization'],
 }))
-export type ProductWithStock = Product & { stock: number }
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /** Fetch stock for a single product id */
@@ -121,7 +121,7 @@ app.get('/products/:id', async (c) => {
 // ─── POST /products ───────────────────────────────────────────────────────────
 app.post('/products', async (c) => {
     try {
-        const body = await c.req.json<Omit<Product, 'id'>>()
+        const body = await c.req.json<Omit<Product, 'id'> & { stock: number }>()
 
         if (!body.title || typeof body.title !== 'string') {
             return c.json({ message: "Field 'title' is required and must be a string." }, 400)
@@ -131,6 +131,10 @@ app.post('/products', async (c) => {
             return c.json({ message: "Field 'price' is required and must be an integer." }, 400)
         }
 
+        if (body.stock === undefined || !Number.isInteger(body.stock) || body.stock < 0) {
+            return c.json({ message: "Field 'stock' is required and must be a non-negative integer." }, 400)
+        }
+
         const newProduct: Product = {
             id: crypto.randomUUID(),
             title: body.title,
@@ -138,14 +142,23 @@ app.post('/products', async (c) => {
             price: body.price,
         }
 
-        await db.send(
-            new PutItemCommand({
-                TableName: PRODUCTS_TABLE,
-                Item: marshall(newProduct),
-            })
-        )
+        // Write both records in parallel — product and its initial stock entry
+        await Promise.all([
+            db.send(
+                new PutItemCommand({
+                    TableName: PRODUCTS_TABLE,
+                    Item: marshall(newProduct),
+                })
+            ),
+            db.send(
+                new PutItemCommand({
+                    TableName: STOCK_TABLE,
+                    Item: marshall({ product_id: newProduct.id, count: body.stock }),
+                })
+            ),
+        ])
 
-        return c.json(newProduct, 201)
+        return c.json({ ...newProduct, stock: body.stock } as ProductWithStock, 201)
     } catch (err) {
         console.error('POST /products failed:', err)
         return c.json({ message: 'Failed to create product', error: (err as Error).message }, 500)
