@@ -67,6 +67,8 @@ export class ImportServiceStack extends cdk.Stack {
 
         // GET /import?name={fileName}  →  returns signed S3 PUT URL
         const importResource = api.root.addResource('import')
+        importResource.addMethod('POST', importIntegration)
+
         importResource.addMethod('GET', importIntegration, {
             requestParameters: {
                 // Mark 'name' as a documented (but not enforced) query param
