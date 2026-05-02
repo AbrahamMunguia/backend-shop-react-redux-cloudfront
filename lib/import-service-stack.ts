@@ -4,6 +4,7 @@ import * as lambda from 'aws-cdk-lib/aws-lambda'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as apigateway from 'aws-cdk-lib/aws-apigateway'
 import * as s3 from 'aws-cdk-lib/aws-s3'
+import * as s3n from 'aws-cdk-lib/aws-s3-notifications'
 import * as iam from 'aws-cdk-lib/aws-iam'
 
 export class ImportServiceStack extends cdk.Stack {
@@ -31,19 +32,23 @@ export class ImportServiceStack extends cdk.Stack {
             ],
         })
 
-        // ─── Lambda ───────────────────────────────────────────────────────────────
-
-        const importProductsFile = new NodejsFunction(this, 'importProductsFile', {
+        const sharedLambdaProps = {
             runtime: lambda.Runtime.NODEJS_22_X,
             memorySize: 512,
             timeout: cdk.Duration.seconds(10),
+        }
+
+        // ─── importProductsFile Lambda ────────────────────────────────────────────
+
+        const importProductsFile = new NodejsFunction(this, 'importProductsFile', {
+            ...sharedLambdaProps,
             entry: 'lambda/import.ts',
             handler: 'handler',
-            description: 'Lambda function for import operations',
             environment: {
                 IMPORT_BUCKET_NAME: importBucket.bucketName,
             },
         })
+
         importBucket.grantReadWrite(importProductsFile)
 
         importProductsFile.addToRolePolicy(
@@ -51,6 +56,26 @@ export class ImportServiceStack extends cdk.Stack {
                 actions: ['s3:PutObject'],
                 resources: [importBucket.arnForObjects('uploaded/*')],
             })
+        )
+
+        // ─── importFileParser Lambda ──────────────────────────────────────────────
+
+        const importFileParser = new NodejsFunction(this, 'importFileParser', {
+            ...sharedLambdaProps,
+            entry: 'lambda/file-parser.ts',
+            handler: 'handler',
+            timeout: cdk.Duration.seconds(60), // CSV parsing may take longer
+        })
+
+        // Grant read access to the entire bucket so it can stream uploaded files
+        importBucket.grantRead(importFileParser)
+
+        // ─── S3 Event Trigger: uploaded/* → importFileParser ──────────────────────
+
+        importBucket.addEventNotification(
+            s3.EventType.OBJECT_CREATED,
+            new s3n.LambdaDestination(importFileParser),
+            { prefix: 'uploaded/' }   // only fires for files in the uploaded/ folder
         )
 
         // ─── API Gateway ──────────────────────────────────────────────────────────
@@ -65,13 +90,10 @@ export class ImportServiceStack extends cdk.Stack {
 
         const importIntegration = new apigateway.LambdaIntegration(importProductsFile)
 
-        // GET /import?name={fileName}  →  returns signed S3 PUT URL
         const importResource = api.root.addResource('import')
         importResource.addMethod('POST', importIntegration)
-
         importResource.addMethod('GET', importIntegration, {
             requestParameters: {
-                // Mark 'name' as a documented (but not enforced) query param
                 'method.request.querystring.name': false,
             },
         })
