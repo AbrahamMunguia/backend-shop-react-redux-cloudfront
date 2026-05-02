@@ -27,7 +27,7 @@
     "@types/aws-lambda": "^8.10.161",
     "@types/uuid": "^10.0.0",
     "aws-cdk-lib": "^2.248.0",
-    "aws-lambda": "^1.0.7",
+    "aws-lambda": "^1.0.6",
     "constructs": "^10.5.0",
     "hono": "^4.12.14",
     "uuid": "^14.0.0"
