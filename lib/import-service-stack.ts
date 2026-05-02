@@ -39,6 +39,7 @@ export class ImportServiceStack extends cdk.Stack {
             timeout: cdk.Duration.seconds(10),
             entry: 'lambda/import.ts',
             handler: 'handler',
+            description: 'Lambda function for import operations',
             environment: {
                 IMPORT_BUCKET_NAME: importBucket.bucketName,
             },
