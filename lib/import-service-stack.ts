@@ -4,10 +4,14 @@ import * as lambda from 'aws-cdk-lib/aws-lambda'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as apigateway from 'aws-cdk-lib/aws-apigateway'
 import * as s3 from 'aws-cdk-lib/aws-s3'
+import * as iam from 'aws-cdk-lib/aws-iam'
 
 export class ImportServiceStack extends cdk.Stack {
     constructor(scope: Construct, id: string, props?: cdk.StackProps) {
         super(scope, id, props)
+
+        // ─── S3 Bucket ────────────────────────────────────────────────────────────
+
         const importBucket = new s3.Bucket(this, 'ImportBucket', {
             blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
             removalPolicy: cdk.RemovalPolicy.DESTROY,
@@ -15,27 +19,40 @@ export class ImportServiceStack extends cdk.Stack {
             cors: [
                 {
                     allowedOrigins: ['*'],
-                    allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.POST, s3.HttpMethods.PUT, s3.HttpMethods.DELETE, s3.HttpMethods.HEAD],
+                    allowedMethods: [
+                        s3.HttpMethods.GET,
+                        s3.HttpMethods.POST,
+                        s3.HttpMethods.PUT,
+                        s3.HttpMethods.DELETE,
+                        s3.HttpMethods.HEAD,
+                    ],
                     allowedHeaders: ['*'],
                 },
             ],
-        });
-        const sharedLambdaProps = {
+        })
+
+        // ─── Lambda ───────────────────────────────────────────────────────────────
+
+        const importProductsFile = new NodejsFunction(this, 'importProductsFile', {
             runtime: lambda.Runtime.NODEJS_22_X,
             memorySize: 512,
             timeout: cdk.Duration.seconds(10),
-        }
-
-        const importLambda = new NodejsFunction(this, 'ImportLambda', {
-            ...sharedLambdaProps,
             entry: 'lambda/import.ts',
             handler: 'handler',
             environment: {
                 IMPORT_BUCKET_NAME: importBucket.bucketName,
             },
-        });
+        })
+        importBucket.grantReadWrite(importProductsFile)
 
-        importBucket.grantReadWrite(importLambda);
+        importProductsFile.addToRolePolicy(
+            new iam.PolicyStatement({
+                actions: ['s3:PutObject'],
+                resources: [importBucket.arnForObjects('uploaded/*')],
+            })
+        )
+
+        // ─── API Gateway ──────────────────────────────────────────────────────────
 
         const api = new apigateway.RestApi(this, 'import-api', {
             restApiName: 'Import Service API',
@@ -45,14 +62,16 @@ export class ImportServiceStack extends cdk.Stack {
             },
         })
 
-        const importIntegration = new apigateway.LambdaIntegration(importLambda)
+        const importIntegration = new apigateway.LambdaIntegration(importProductsFile)
 
+        // GET /import?name={fileName}  →  returns signed S3 PUT URL
         const importResource = api.root.addResource('import')
-        importResource.addMethod('GET', importIntegration)
-        importResource.addMethod('POST', importIntegration)
-
-        const importByIdResource = importResource.addResource('{id}')
-        importByIdResource.addMethod('GET', importIntegration)
+        importResource.addMethod('GET', importIntegration, {
+            requestParameters: {
+                // Mark 'name' as a documented (but not enforced) query param
+                'method.request.querystring.name': false,
+            },
+        })
 
         // ─── Outputs ──────────────────────────────────────────────────────────────
 
