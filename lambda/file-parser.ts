@@ -1,57 +1,85 @@
-import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3'
-import { S3Event } from 'aws-lambda'
-import { Readable } from 'stream'
-import csv from 'csv-parser'
+import { S3Event } from "aws-lambda";
+import { S3Client, GetObjectCommand } from "@aws-sdk/client-s3";
+import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
+import { Readable } from "stream";
+import csv from "csv-parser";
 
-const s3 = new S3Client({})
+const s3Client = new S3Client({ region: process.env.AWS_REGION });
+const sqsClient = new SQSClient({ region: process.env.AWS_REGION });
 
-// ─── Handler ──────────────────────────────────────────────────────────────────
-// Triggered by s3:ObjectCreated:* on the uploaded/ prefix.
-// Streams the CSV from S3, parses it row by row, and logs each record.
-export async function handler(event: S3Event): Promise<void> {
-    for (const record of event.Records) {
-        const bucket = record.s3.bucket.name
-        const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, ' '))
+const QUEUE_URL = process.env.CATALOG_ITEMS_QUEUE_URL;
 
-        console.log(`Processing file | bucket: ${bucket} | key: ${key}`)
-
-        try {
-            const { Body } = await s3.send(
-                new GetObjectCommand({ Bucket: bucket, Key: key })
-            )
-
-            if (!Body) {
-                console.warn(`Empty body received for key: ${key}`)
-                continue
-            }
-
-            await parseCSVStream(Body as Readable, key)
-        } catch (err) {
-            console.error(`Failed to process file ${key}:`, err)
-            throw err // rethrow so Lambda marks the invocation as failed
-        }
+const sendToSqs = async (record: Record<string, string>): Promise<void> => {
+    if (!QUEUE_URL) {
+        throw new Error("CATALOG_ITEMS_QUEUE_URL environment variable is not set");
     }
-}
 
-// ─── Stream parser ────────────────────────────────────────────────────────────
+    await sqsClient.send(
+        new SendMessageCommand({
+            QueueUrl: QUEUE_URL,
+            MessageBody: JSON.stringify(record),
+            // Group by filename for FIFO queues — safe to leave on standard queues too
+            MessageGroupId: undefined,
+        })
+    );
+};
 
-function parseCSVStream(stream: Readable, key: string): Promise<void> {
+const parseAndSendCsv = (stream: Readable): Promise<number> => {
     return new Promise((resolve, reject) => {
-        let rowCount = 0
+        let sentCount = 0;
+        const pendingSends: Promise<void>[] = [];
 
         stream
             .pipe(csv())
-            .on('data', (row: Record<string, string>) => {
-                rowCount++
-                console.log(`[${key}] Row ${rowCount}:`, JSON.stringify(row))
+            .on("data", (record: Record<string, string>) => {
+                // Task 6.2: send each record to SQS — no more console.log of entries
+                const sendPromise = sendToSqs(record)
+                    .then(() => {
+                        sentCount++;
+                    })
+                    .catch((err) => {
+                        console.error(
+                            `Failed to send record to SQS: ${JSON.stringify(record)}`,
+                            err
+                        );
+                        // Re-throw so the outer promise rejects on any failure
+                        throw err;
+                    });
+
+                pendingSends.push(sendPromise);
             })
-            .on('end', () => {
-                console.log(`[${key}] Finished parsing. Total rows: ${rowCount}`)
-                resolve()
+            .on("error", (err) => {
+                reject(err);
             })
-            .on('error', (err) => {
-                console.error(`[${key}] CSV parse error:`, err)
-                reject(err)
-            })
-    })
-}
+            .on("end", () => {
+                // Wait for all in-flight SQS sends before resolving
+                Promise.all(pendingSends).then(() => resolve(sentCount)).catch(reject);
+            });
+    });
+};
+
+export const handler = async (event: S3Event): Promise<void> => {
+    for (const record of event.Records) {
+        const bucket = record.s3.bucket.name;
+        const key = decodeURIComponent(record.s3.object.key.replace(/\+/g, " "));
+
+        console.log(`Processing file: s3://${bucket}/${key}`);
+
+        const s3Response = await s3Client.send(
+            new GetObjectCommand({ Bucket: bucket, Key: key })
+        );
+
+        if (!s3Response.Body) {
+            console.error(`Empty body for s3://${bucket}/${key} — skipping`);
+            continue;
+        }
+
+        const stream = s3Response.Body as Readable;
+        const sentCount = await parseAndSendCsv(stream);
+
+        // Task 6.2: only log summary metadata, not individual CSV records
+        console.log(
+            `importFileParser: sent ${sentCount} record(s) to SQS from s3://${bucket}/${key}`
+        );
+    }
+};
