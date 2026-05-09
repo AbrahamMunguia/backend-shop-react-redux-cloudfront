@@ -34,6 +34,7 @@ export class ProductServiceStack extends cdk.Stack {
       ...sharedLambdaProps,
       entry: 'lambda/products.ts',
       handler: 'handler',
+      description: 'Lambda function for products operations',
       environment: {
         PRODUCTS_TABLE_NAME: productsTable.tableName,
         STOCK_TABLE_NAME: stockTable.tableName,
@@ -44,6 +45,7 @@ export class ProductServiceStack extends cdk.Stack {
       ...sharedLambdaProps,
       entry: 'lambda/stock.ts',
       handler: 'handler',
+      description: 'Lambda function for stock operations',
       environment: {
         STOCK_TABLE_NAME: stockTable.tableName,
       },
