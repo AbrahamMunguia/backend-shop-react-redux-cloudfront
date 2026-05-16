@@ -5,24 +5,35 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as apigateway from 'aws-cdk-lib/aws-apigateway'
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb'
 import * as triggers from 'aws-cdk-lib/triggers'
+import * as sqs from 'aws-cdk-lib/aws-sqs'
+import * as sns from 'aws-cdk-lib/aws-sns'
+import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions'
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources'
+import * as path from 'path'
+
+interface ProductServiceStackProps extends cdk.StackProps {
+  notificationEmail: string;
+}
 
 export class ProductServiceStack extends cdk.Stack {
-  constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+  // Expose queue ARN/URL so Import Service stack can reference them
+  public readonly catalogItemsQueueArn: string;
+  public readonly catalogItemsQueueUrl: string;
+
+  constructor(scope: Construct, id: string, props: ProductServiceStackProps) {
     super(scope, id, props)
 
-    const productsTable = new dynamodb.Table(this, 'ProductsTable', {
-      tableName: 'products',
-      partitionKey: { name: 'id', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    })
+    const productsTable = dynamodb.Table.fromTableName(
+      this,
+      "ProductsTable",
+      "products"
+    );
 
-    const stockTable = new dynamodb.Table(this, 'StockTable', {
-      tableName: 'stock',
-      partitionKey: { name: 'product_id', type: dynamodb.AttributeType.STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
-      removalPolicy: cdk.RemovalPolicy.DESTROY,
-    })
+    const stockTable = dynamodb.Table.fromTableName(
+      this,
+      "StocksTable",
+      "stock"   // ← note: your actual table is named "stock" not "stocks"
+    );
 
     const sharedLambdaProps = {
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -105,6 +116,67 @@ export class ProductServiceStack extends cdk.Stack {
     const stockByProductIdResource = stockResource.addResource('{product_id}')
     stockByProductIdResource.addMethod('GET', stockIntegration)
 
+    // ─── Task 6.1: SQS Queue ─────────────────────────────────────────────────
+
+    const catalogItemsQueue = new sqs.Queue(this, 'CatalogItemsQueue', {
+      queueName: 'catalogItemsQueue',
+      deadLetterQueue: {
+        queue: new sqs.Queue(this, 'CatalogItemsDLQ', {
+          queueName: 'catalogItemsQueue-dlq',
+          retentionPeriod: cdk.Duration.days(14),
+        }),
+        maxReceiveCount: 3,
+      },
+      visibilityTimeout: cdk.Duration.seconds(60),
+      retentionPeriod: cdk.Duration.days(4),
+    })
+
+    this.catalogItemsQueueArn = catalogItemsQueue.queueArn
+    this.catalogItemsQueueUrl = catalogItemsQueue.queueUrl
+
+    // ─── Task 6.3: SNS Topic + Email Subscription ─────────────────────────────
+
+    const createProductTopic = new sns.Topic(this, 'CreateProductTopic', {
+      topicName: 'createProductTopic',
+      displayName: 'Product Service — Product Creation Notifications',
+    })
+
+    createProductTopic.addSubscription(
+      new snsSubscriptions.EmailSubscription(props.notificationEmail, {
+        filterPolicy: {
+          productCount: sns.SubscriptionFilter.numericFilter({
+            greaterThan: 0,
+          }),
+        },
+      })
+    )
+
+    // ─── Task 6.1: catalogBatchProcess Lambda ─────────────────────────────────
+
+    const catalogBatchProcess = new NodejsFunction(this, 'CatalogBatchProcess', {
+      ...sharedLambdaProps,
+      entry: path.join(__dirname, '../functions/catalogBatchProcess.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        PRODUCTS_TABLE_NAME: productsTable.tableName,
+        STOCKS_TABLE_NAME: stockTable.tableName,
+        CREATE_PRODUCT_TOPIC_ARN: createProductTopic.topicArn,
+      },
+    })
+
+    catalogBatchProcess.addEventSource(
+      new lambdaEventSources.SqsEventSource(catalogItemsQueue, {
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(10),
+        reportBatchItemFailures: true,
+      })
+    )
+
+    productsTable.grantWriteData(catalogBatchProcess)
+    stockTable.grantWriteData(catalogBatchProcess)
+    createProductTopic.grantPublish(catalogBatchProcess)
+
     // ─── Outputs ──────────────────────────────────────────────────────────────
 
     new cdk.CfnOutput(this, 'ApiUrl', {
@@ -118,6 +190,22 @@ export class ProductServiceStack extends cdk.Stack {
 
     new cdk.CfnOutput(this, 'StockTableName', {
       value: stockTable.tableName,
+    })
+
+    new cdk.CfnOutput(this, 'CatalogItemsQueueArn', {
+      value: catalogItemsQueue.queueArn,
+      exportName: 'CatalogItemsQueueArn',
+      description: 'SQS queue ARN for Import Service to send CSV records into',
+    })
+
+    new cdk.CfnOutput(this, 'CatalogItemsQueueUrl', {
+      value: catalogItemsQueue.queueUrl,
+      exportName: 'CatalogItemsQueueUrl',
+    })
+
+    new cdk.CfnOutput(this, 'CreateProductTopicArn', {
+      value: createProductTopic.topicArn,
+      exportName: 'CreateProductTopicArn',
     })
   }
 }

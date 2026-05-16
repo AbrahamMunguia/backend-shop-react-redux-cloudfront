@@ -5,10 +5,17 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as apigateway from 'aws-cdk-lib/aws-apigateway'
 import * as s3 from 'aws-cdk-lib/aws-s3'
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications'
+import * as sqs from 'aws-cdk-lib/aws-sqs'
 import * as iam from 'aws-cdk-lib/aws-iam'
 
+// Task 6.2: accept queue references from Product Service stack
+interface ImportServiceStackProps extends cdk.StackProps {
+    catalogItemsQueueArn: string
+    catalogItemsQueueUrl: string
+}
+
 export class ImportServiceStack extends cdk.Stack {
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: ImportServiceStackProps) {
         super(scope, id, props)
 
         // ─── S3 Bucket ────────────────────────────────────────────────────────────
@@ -31,6 +38,16 @@ export class ImportServiceStack extends cdk.Stack {
                 },
             ],
         })
+
+        // Task 6.2: reference the SQS queue from Product Service
+        const catalogItemsQueue = sqs.Queue.fromQueueAttributes(
+            this,
+            'CatalogItemsQueue',
+            {
+                queueArn: props.catalogItemsQueueArn,
+                queueUrl: props.catalogItemsQueueUrl,
+            }
+        )
 
         const sharedLambdaProps = {
             runtime: lambda.Runtime.NODEJS_22_X,
@@ -64,18 +81,24 @@ export class ImportServiceStack extends cdk.Stack {
             ...sharedLambdaProps,
             entry: 'lambda/file-parser.ts',
             handler: 'handler',
-            timeout: cdk.Duration.seconds(60), // CSV parsing may take longer
+            timeout: cdk.Duration.seconds(60),
+            environment: {
+                // Task 6.2: queue URL so the lambda forwards each CSV record to SQS
+                CATALOG_ITEMS_QUEUE_URL: catalogItemsQueue.queueUrl,
+            },
         })
 
-        // Grant read access to the entire bucket so it can stream uploaded files
         importBucket.grantRead(importFileParser)
+
+        // Task 6.2: allow importFileParser to send messages into the queue
+        catalogItemsQueue.grantSendMessages(importFileParser)
 
         // ─── S3 Event Trigger: uploaded/* → importFileParser ──────────────────────
 
         importBucket.addEventNotification(
             s3.EventType.OBJECT_CREATED,
             new s3n.LambdaDestination(importFileParser),
-            { prefix: 'uploaded/' }   // only fires for files in the uploaded/ folder
+            { prefix: 'uploaded/' }
         )
 
         // ─── API Gateway ──────────────────────────────────────────────────────────
