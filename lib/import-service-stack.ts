@@ -3,15 +3,18 @@ import { Construct } from 'constructs'
 import * as lambda from 'aws-cdk-lib/aws-lambda'
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs'
 import * as apigateway from 'aws-cdk-lib/aws-apigateway'
+import * as cognito from 'aws-cdk-lib/aws-cognito'
 import * as s3 from 'aws-cdk-lib/aws-s3'
 import * as s3n from 'aws-cdk-lib/aws-s3-notifications'
 import * as sqs from 'aws-cdk-lib/aws-sqs'
 import * as iam from 'aws-cdk-lib/aws-iam'
 
-// Task 6.2: accept queue references from Product Service stack
 interface ImportServiceStackProps extends cdk.StackProps {
     catalogItemsQueueArn: string
     catalogItemsQueueUrl: string
+    basicAuthorizerFn: lambda.IFunction
+    userPool: cognito.IUserPool
+    userPoolClient: cognito.IUserPoolClient
 }
 
 export class ImportServiceStack extends cdk.Stack {
@@ -39,7 +42,6 @@ export class ImportServiceStack extends cdk.Stack {
             ],
         })
 
-        // Task 6.2: reference the SQS queue from Product Service
         const catalogItemsQueue = sqs.Queue.fromQueueAttributes(
             this,
             'CatalogItemsQueue',
@@ -83,14 +85,11 @@ export class ImportServiceStack extends cdk.Stack {
             handler: 'handler',
             timeout: cdk.Duration.seconds(60),
             environment: {
-                // Task 6.2: queue URL so the lambda forwards each CSV record to SQS
                 CATALOG_ITEMS_QUEUE_URL: catalogItemsQueue.queueUrl,
             },
         })
 
         importBucket.grantRead(importFileParser)
-
-        // Task 6.2: allow importFileParser to send messages into the queue
         catalogItemsQueue.grantSendMessages(importFileParser)
 
         // ─── S3 Event Trigger: uploaded/* → importFileParser ──────────────────────
@@ -118,11 +117,38 @@ export class ImportServiceStack extends cdk.Stack {
             },
         })
 
+        // ─── Cognito User Pool authorizer ────────────────────────────────────────
+        //
+        // Validates the Cognito JWT (id token or access token) passed in the
+        // Authorization header. No lambda invocation needed — API Gateway validates
+        // the token directly against the User Pool.
+
+        const cognitoAuthorizer = new apigateway.CognitoUserPoolsAuthorizer(
+            this,
+            'CognitoAuthorizer',
+            {
+                cognitoUserPools: [props.userPool],
+                authorizerName: 'CognitoAuthorizer',
+                // Cache validated tokens for 5 minutes
+                resultsCacheTtl: cdk.Duration.seconds(300),
+                identitySource: apigateway.IdentitySource.header('Authorization'),
+            }
+        )
+
         const importIntegration = new apigateway.LambdaIntegration(importProductsFile)
 
+        // ─── /import resource ─────────────────────────────────────────────────────
+
         const importResource = api.root.addResource('import')
-        importResource.addMethod('POST', importIntegration)
+
+        importResource.addMethod('POST', importIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
+        })
+
         importResource.addMethod('GET', importIntegration, {
+            authorizer: cognitoAuthorizer,
+            authorizationType: apigateway.AuthorizationType.COGNITO,
             requestParameters: {
                 'method.request.querystring.name': false,
             },
