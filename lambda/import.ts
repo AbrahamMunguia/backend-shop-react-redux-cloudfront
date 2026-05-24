@@ -24,11 +24,13 @@ app.use('*', async (c, next) => {
     c.res.headers.set('Access-Control-Allow-Origin', '*')
     c.res.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     c.res.headers.set('Access-Control-Allow-Headers', 'Content-Type')
+    c.res.headers.set('Access-Control-Allow-Credentials', 'true')
 })
 app.use('*', cors({
     origin: ['*'],
     allowMethods: ['GET', 'POST', 'OPTIONS'],
     allowHeaders: ['*'],
+    credentials: true,
 }))
 // ─── GET /import?name={fileName} ─────────────────────────────────────────────
 app.get('/import', async (c) => {

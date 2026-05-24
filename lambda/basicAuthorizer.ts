@@ -9,22 +9,22 @@ const generatePolicy = (
     effect: "Allow" | "Deny",
     resource: string
 ): APIGatewayAuthorizerResult => {
-    const policyDocument: PolicyDocument = {
-        Version: "2012-10-17",
-        Statement: [
-            {
-                Action: "execute-api:Invoke",
-                Effect: effect,
-                Resource: resource,
-            },
-        ],
-    };
-
+    const wildcardResource = resource.replace(
+        /\/[A-Z]+\/[^/]+$/,
+        '/*/*'
+    )
     return {
         principalId,
-        policyDocument,
-    };
-};
+        policyDocument: {
+            Version: "2012-10-17",
+            Statement: [{
+                Action: "execute-api:Invoke",
+                Effect: effect,
+                Resource: wildcardResource,
+            }],
+        },
+    }
+}
 
 export const handler = async (
     event: APIGatewayTokenAuthorizerEvent
